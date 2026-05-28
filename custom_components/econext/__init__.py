@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .api import EconextConnectionError, EconextApi
 from .const import (
@@ -25,6 +26,8 @@ from .cooling.driver import CoolingDriver
 from .coordinator import EconextCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+COOLING_STORAGE_VERSION = 1
 
 type EconextConfigEntry = ConfigEntry[EconextCoordinator]
 
@@ -53,11 +56,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EconextConfigEntry) -> b
 
     # Optional cooling controller — enabled and dew-point sensor configured.
     if entry.options.get(CONF_COOLING_ENABLED) and entry.options.get(CONF_DEW_POINT_ENTITY):
+        store = Store(hass, COOLING_STORAGE_VERSION, f"{DOMAIN}_cooling_{entry.entry_id}")
         coordinator.cooling_driver = CoolingDriver(
             coordinator,
             circuit=int(entry.options.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT)),
             dew_point_entity=entry.options.get(CONF_DEW_POINT_ENTITY),
             oem_flow_entity=entry.options.get(CONF_OEM_FLOW_ENTITY),
+            store=store,
         )
         if not coordinator.cooling_driver.available:
             _LOGGER.warning(
@@ -65,6 +70,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: EconextConfigEntry) -> b
                 entry.options.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT),
             )
             coordinator.cooling_driver = None
+        else:
+            await coordinator.cooling_driver.async_load()
 
     # Store coordinator
     entry.runtime_data = coordinator

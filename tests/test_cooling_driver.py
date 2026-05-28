@@ -146,6 +146,52 @@ async def test_dry_run_suppresses_pump_speed_writes_on_start():
     assert coord.writes == []
 
 
+class _FakeStore:
+    """Minimal Store stand-in capturing the delay-saved snapshot."""
+
+    def __init__(self, initial: dict | None = None) -> None:
+        self._data = initial
+        self.saved: dict | None = None
+
+    async def async_load(self):
+        return self._data
+
+    def async_delay_save(self, data_func, delay):
+        self.saved = data_func()
+
+
+async def test_state_persisted_on_finalize():
+    from custom_components.econext.cooling.const import STATE_COOLDOWN
+
+    params = _demand_params()
+    params[1365] = 0  # comp off -> cooldown finalizes to idle
+    driver, coord = _driver(params, dry_run=True)
+    driver._store = _FakeStore()
+    driver.state.cycle_state = STATE_COOLDOWN
+    driver.state.running_comp_on_seconds = 600.0
+    await driver.async_tick(dt_util.now())
+
+    assert driver._store.saved is not None
+    assert driver._store.saved["cycle_state"] == STATE_IDLE
+    assert driver._store.saved["last_running_minutes"] == 10.0  # 600s / 60
+
+
+async def test_state_restored_on_load():
+    driver, coord = _driver(_demand_params(), dry_run=True)
+    driver._store = _FakeStore(
+        {
+            "cycle_state": "running",
+            "last_running_minutes": 18.0,
+            "last_cycle_end": "2026-05-28T19:00:00+00:00",
+        }
+    )
+    await driver.async_load()
+
+    assert driver.state.cycle_state == "running"
+    assert driver.state.last_running_minutes == 18.0
+    assert driver.state.last_cycle_end is not None
+
+
 async def test_oem_flow_falls_back_to_hp_flow():
     driver, coord = _driver(_demand_params(), dry_run=True)
     await driver.async_tick(dt_util.now())

@@ -19,6 +19,8 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.helpers.storage import Store
+from homeassistant.util.dt import parse_datetime
 
 from ..climate import CIRCUITS
 from ..const import HP_STATUS_WORK_MODE_MAPPING, decode_current_season
@@ -60,6 +62,7 @@ class CoolingDriver:
         circuit: int,
         dew_point_entity: str | None,
         oem_flow_entity: str | None,
+        store: Store | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.hass = coordinator.hass
@@ -67,6 +70,7 @@ class CoolingDriver:
         self._circuit_cfg = CIRCUITS.get(circuit)
         self.dew_point_entity = dew_point_entity
         self.oem_flow_entity = oem_flow_entity
+        self._store = store
 
         self.schedule_detector = ScheduleDetector()
         self.state = CoolingState()
@@ -92,6 +96,48 @@ class CoolingDriver:
     def update_tunable(self, key: str, value: Any) -> None:
         """Set one tunable from its entity."""
         self.tunables[key] = value
+
+    async def async_load(self) -> None:
+        """Restore persisted CoolingState so break timers / cycle phase survive
+        restarts (matches the standalone, and avoids a spurious start on reload
+        because last_cycle_end is no longer unknown)."""
+        if self._store is None:
+            return
+        data = await self._store.async_load()
+        if not data:
+            return
+        s = self.state
+        s.cycle_state = data.get("cycle_state", s.cycle_state)
+        s.last_running_minutes = float(data.get("last_running_minutes", 0.0))
+        s.running_comp_on_seconds = float(data.get("running_comp_on_seconds", 0.0))
+        s.below_dew_streak_s = float(data.get("below_dew_streak_s", 0.0))
+        s.hard_floor_streak_s = float(data.get("hard_floor_streak_s", 0.0))
+        s.last_target_written = data.get("last_target_written")
+        s.state_entered = parse_datetime(data["state_entered"]) if data.get("state_entered") else None
+        s.last_cycle_end = parse_datetime(data["last_cycle_end"]) if data.get("last_cycle_end") else None
+        s.last_preempt_active_at = (
+            parse_datetime(data["last_preempt_active_at"]) if data.get("last_preempt_active_at") else None
+        )
+        _LOGGER.info("Cooling: restored state %s (last_run=%.1f)", s.cycle_state, s.last_running_minutes)
+
+    def _state_to_dict(self) -> dict[str, Any]:
+        s = self.state
+        return {
+            "cycle_state": s.cycle_state,
+            "last_running_minutes": s.last_running_minutes,
+            "running_comp_on_seconds": s.running_comp_on_seconds,
+            "below_dew_streak_s": s.below_dew_streak_s,
+            "hard_floor_streak_s": s.hard_floor_streak_s,
+            "last_target_written": s.last_target_written,
+            "state_entered": s.state_entered.isoformat() if s.state_entered else None,
+            "last_cycle_end": s.last_cycle_end.isoformat() if s.last_cycle_end else None,
+            "last_preempt_active_at": s.last_preempt_active_at.isoformat() if s.last_preempt_active_at else None,
+        }
+
+    def _persist(self) -> None:
+        """Schedule a throttled save of CoolingState (coalesces rapid ticks)."""
+        if self._store is not None:
+            self._store.async_delay_save(self._state_to_dict, 10)
 
     async def async_tick(self, now: datetime) -> None:
         """Run one state-machine tick. Never raises into the poll loop."""
@@ -306,6 +352,8 @@ class CoolingDriver:
             self.state.hard_floor_streak_s = 0.0
             self.state.last_cycle_end = now
 
+        self._persist()
+
     def _reset_to_idle(self, now: datetime) -> None:
         self.state.cycle_state = STATE_IDLE
         self.state.state_entered = now
@@ -313,6 +361,7 @@ class CoolingDriver:
         self.state.below_dew_streak_s = 0.0
         self.state.hard_floor_streak_s = 0.0
         self.state.last_cycle_end = now
+        self._persist()
 
     async def _write_target(self, value: float, dry_run: bool) -> None:
         """Write the circuit cooling target, debounced on last_target_written."""
