@@ -118,9 +118,10 @@
             "active_operating_mode": {
                 "name": "Active operating mode",
                 "state": {
-                    "summer": "Summer",
-                    "winter": "Winter",
-                    "auto": "Auto",
+                    "standby": "Standby",
+                    "cooling": "Cooling",
+                    "heating": "Heating",
+                    "dhw": "Domestic Hot Water",
                     "unknown": "Unknown"
                 }
             },

@@ -237,60 +237,53 @@ class TestEnumSensor:
         assert sensor.native_value == "ch"
         assert sensor._attr_options == ["ch", "dhw", "unknown"]
 
-    def test_active_operating_mode_handles_value_4(self, coordinator: EconextCoordinator) -> None:
-        """Test active_operating_mode enum handles value 4 (heating)."""
-        from custom_components.econext.const import ACTIVE_MODE_MAPPING, ACTIVE_MODE_OPTIONS
+    def _active_mode_sensor(self, coordinator: EconextCoordinator, mode: int, flap: int):
+        """Build an active_operating_mode sensor with param 495 and flap valve 83 set."""
+        from custom_components.econext.const import ACTIVE_MODE_OPTIONS
+        from custom_components.econext.sensor import EconextActiveOperatingModeSensor
 
-        coordinator.data["495"]["value"] = 4
+        coordinator.data["495"]["value"] = mode
+        coordinator.data["83"] = {"value": flap, "name": "flapValveStates", "info": 23}
 
         description = EconextSensorEntityDescription(
             key="active_operating_mode",
             param_id="495",
             device_class=SensorDeviceClass.ENUM,
             options=ACTIVE_MODE_OPTIONS,
-            value_map=ACTIVE_MODE_MAPPING,
         )
+        return EconextActiveOperatingModeSensor(coordinator, description)
 
-        sensor = EconextSensor(coordinator, description)
-
+    def test_active_operating_mode_winter_heating(self, coordinator: EconextCoordinator) -> None:
+        """Value 4 (winter + heating bit), flap on CH -> heating."""
+        sensor = self._active_mode_sensor(coordinator, mode=4, flap=0)
         assert sensor.native_value == "heating"
         assert "heating" in sensor._attr_options
 
-    def test_active_operating_mode_standby(self, coordinator: EconextCoordinator) -> None:
-        """Test active_operating_mode enum returns standby for value 0."""
-        from custom_components.econext.const import ACTIVE_MODE_MAPPING, ACTIVE_MODE_OPTIONS
+    def test_active_operating_mode_winter_idle_standby(self, coordinator: EconextCoordinator) -> None:
+        """Value 0 (winter idle, no bits) -> standby."""
+        sensor = self._active_mode_sensor(coordinator, mode=0, flap=0)
+        assert sensor.native_value == "standby"
 
-        coordinator.data["495"]["value"] = 0
-
-        description = EconextSensorEntityDescription(
-            key="active_operating_mode",
-            param_id="495",
-            device_class=SensorDeviceClass.ENUM,
-            options=ACTIVE_MODE_OPTIONS,
-            value_map=ACTIVE_MODE_MAPPING,
-        )
-
-        sensor = EconextSensor(coordinator, description)
-
+    def test_active_operating_mode_summer_idle_standby(self, coordinator: EconextCoordinator) -> None:
+        """Value 1 (summer season bit only, HP idle) -> standby."""
+        sensor = self._active_mode_sensor(coordinator, mode=1, flap=0)
         assert sensor.native_value == "standby"
 
     def test_active_operating_mode_cooling(self, coordinator: EconextCoordinator) -> None:
-        """Test active_operating_mode enum returns cooling for value 3."""
-        from custom_components.econext.const import ACTIVE_MODE_MAPPING, ACTIVE_MODE_OPTIONS
-
-        coordinator.data["495"]["value"] = 3
-
-        description = EconextSensorEntityDescription(
-            key="active_operating_mode",
-            param_id="495",
-            device_class=SensorDeviceClass.ENUM,
-            options=ACTIVE_MODE_OPTIONS,
-            value_map=ACTIVE_MODE_MAPPING,
-        )
-
-        sensor = EconextSensor(coordinator, description)
-
+        """Value 3 (summer + cooling bit) -> cooling."""
+        sensor = self._active_mode_sensor(coordinator, mode=3, flap=0)
         assert sensor.native_value == "cooling"
+
+    def test_active_operating_mode_dhw(self, coordinator: EconextCoordinator) -> None:
+        """Value 5 (heating bit) with flap routed to DHW -> dhw."""
+        sensor = self._active_mode_sensor(coordinator, mode=5, flap=3)
+        assert sensor.native_value == "dhw"
+        assert "dhw" in sensor._attr_options
+
+    def test_active_operating_mode_heating_flap_on_ch(self, coordinator: EconextCoordinator) -> None:
+        """Heating bit set but flap on CH -> heating, not dhw."""
+        sensor = self._active_mode_sensor(coordinator, mode=5, flap=0)
+        assert sensor.native_value == "heating"
 
     def test_enum_sensor_unmapped_value_returns_unknown(self, coordinator: EconextCoordinator) -> None:
         """Test enum sensor returns 'unknown' for unmapped values (e.g., 65336)."""
@@ -410,16 +403,16 @@ class TestEnumSensor:
 
     def test_enum_sensor_unmapped_value_logs_warning(self, coordinator: EconextCoordinator, caplog: pytest.LogCaptureFixture) -> None:
         """Test enum sensor logs a warning with the raw value for unmapped values."""
-        from custom_components.econext.const import ACTIVE_MODE_MAPPING, ACTIVE_MODE_OPTIONS
+        from custom_components.econext.const import HP_STATUS_WORK_MODE_MAPPING, HP_STATUS_WORK_MODE_OPTIONS
 
-        coordinator.data["495"]["value"] = 99
+        coordinator.data["1350"] = {"value": 99, "name": "HPStatusWorkMode", "info": 23}
 
         description = EconextSensorEntityDescription(
-            key="active_operating_mode",
-            param_id="495",
+            key="hp_status_work_mode",
+            param_id="1350",
             device_class=SensorDeviceClass.ENUM,
-            options=ACTIVE_MODE_OPTIONS,
-            value_map=ACTIVE_MODE_MAPPING,
+            options=HP_STATUS_WORK_MODE_OPTIONS,
+            value_map=HP_STATUS_WORK_MODE_MAPPING,
         )
 
         sensor = EconextSensor(coordinator, description)
@@ -429,7 +422,7 @@ class TestEnumSensor:
 
         assert result == "unknown"
         assert "Unmapped value 99" in caplog.text
-        assert "active_operating_mode" in caplog.text
+        assert "hp_status_work_mode" in caplog.text
 
 
 class TestSensorEntityCategory:

@@ -92,14 +92,25 @@ def decode_current_season(raw: float | int) -> str | None:
         return "winter"
     return None
 
-# Current active mode - API parameter 495 HeatingOrCooling (read-only)
-ACTIVE_MODE_MAPPING: dict[int, str] = {
-    0: "standby",
-    3: "cooling",
-    4: "heating",
-}
+# Current active mode - API parameter 495 HeatingOrCooling (read-only).
+# This is a bitfield, not a flat enum:
+#   bit 0 (1) = summer season    bit 1 (2) = cooling active    bit 2 (4) = heating active
+# Observed: 0 winter-idle, 1 summer-idle, 3 summer-cooling, 4 winter-heating, 5 summer-heating.
+# The heating bit does not say whether the heat goes to the tank or the radiators,
+# so the flap valve (param 83: 0 = CH, 3 = DHW) is used to flag DHW production.
+ACTIVE_MODE_OPTIONS: list[str] = ["standby", "cooling", "heating", "dhw"]
 
-ACTIVE_MODE_OPTIONS: list[str] = list(ACTIVE_MODE_MAPPING.values())
+
+def decode_active_mode(mode_raw: float | int, flap_raw: float | int | None) -> str:
+    """Decode HeatingOrCooling (495) + flapValveStates (83) into a mode."""
+    mode = int(mode_raw)
+    if mode & 0x4:  # heating bit
+        if flap_raw is not None and int(flap_raw) == 3:  # flap routed to DHW
+            return "dhw"
+        return "heating"
+    if mode & 0x2:  # cooling bit
+        return "cooling"
+    return "standby"
 
 # Active preset mode - for circuits in schedule mode (read-only, computed)
 ACTIVE_PRESET_MODE_OPTIONS: list[str] = ["eco", "comfort"]
@@ -383,7 +394,6 @@ CONTROLLER_SENSORS: tuple[EconextSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:sun-snowflake",
         options=ACTIVE_MODE_OPTIONS,
-        value_map=ACTIVE_MODE_MAPPING,
     ),
     # Decoded from workState2 (param 162); reflects the controller's current
     # season disposition even when the heat pump is idle - what the panel icon shows.

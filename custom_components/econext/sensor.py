@@ -22,6 +22,7 @@ from .const import (
     HEATPUMP_SCHEDULE_DIAGNOSTIC_SENSORS,
     HEATPUMP_SENSORS,
     SILENT_MODE_SCHEDULE_DIAGNOSTIC_SENSORS,
+    decode_active_mode,
     get_alarm_name,
 )
 from .coordinator import EconextCoordinator
@@ -87,7 +88,10 @@ async def async_setup_entry(
     for description in CONTROLLER_SENSORS:
         # Only add if parameter exists in data
         if coordinator.get_param(description.param_id) is not None:
-            entities.append(EconextSensor(coordinator, description))
+            if description.key == "active_operating_mode":
+                entities.append(EconextActiveOperatingModeSensor(coordinator, description))
+            else:
+                entities.append(EconextSensor(coordinator, description))
         else:
             _LOGGER.debug(
                 "Skipping sensor %s - parameter %s not found",
@@ -370,6 +374,26 @@ class EconextSensor(EconextEntity, SensorEntity):
             return value != 999.0
 
         return True
+
+
+class EconextActiveOperatingModeSensor(EconextSensor):
+    """active_operating_mode: decodes the HeatingOrCooling (495) bitfield.
+
+    Uses the flap valve position (param 83: 3 = DHW) to distinguish DHW from
+    space heating.
+    """
+
+    _FLAP_VALVE_PARAM = "83"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the decoded operating mode."""
+        value = self._get_param_value()
+        if value is None:
+            return None
+        flap_param = self.coordinator.get_param(self._FLAP_VALVE_PARAM)
+        flap_raw = flap_param.get("value") if flap_param else None
+        return decode_active_mode(value, flap_raw)
 
 
 class EconextScheduleDiagnosticSensor(EconextSensor):
