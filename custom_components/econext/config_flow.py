@@ -10,9 +10,24 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
 from .api import EconextConnectionError, EconextApi
-from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
-from .const import CONF_THERMOSTAT_ENTITY, DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_COOLING_CIRCUIT,
+    CONF_COOLING_ENABLED,
+    CONF_DEW_POINT_ENTITY,
+    CONF_OEM_FLOW_ENTITY,
+    CONF_THERMOSTAT_ENTITY,
+    DEFAULT_COOLING_CIRCUIT,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -138,12 +153,19 @@ class EconextOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Remove empty strings so clearing the entity selector actually clears it
-            clean = {k: v for k, v in user_input.items() if v}
+            # Remove empty strings so clearing the entity selector actually clears it,
+            # but keep the booleans (False is meaningful).
+            clean = {
+                k: v
+                for k, v in user_input.items()
+                if v != "" and v is not None
+            }
             return self.async_create_entry(title="", data=clean)
 
         current = self._config_entry.options
         current_entity = current.get(CONF_THERMOSTAT_ENTITY)
+        current_dew = current.get(CONF_DEW_POINT_ENTITY)
+        current_oem = current.get(CONF_OEM_FLOW_ENTITY)
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -153,6 +175,28 @@ class EconextOptionsFlow(OptionsFlow):
                         description={"suggested_value": current_entity} if current_entity else None,
                     ): EntitySelector(
                         EntitySelectorConfig(domain="sensor", device_class="temperature"),
+                    ),
+                    vol.Optional(
+                        CONF_COOLING_ENABLED,
+                        default=current.get(CONF_COOLING_ENABLED, False),
+                    ): bool,
+                    vol.Optional(
+                        CONF_DEW_POINT_ENTITY,
+                        description={"suggested_value": current_dew} if current_dew else None,
+                    ): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="temperature"),
+                    ),
+                    vol.Optional(
+                        CONF_OEM_FLOW_ENTITY,
+                        description={"suggested_value": current_oem} if current_oem else None,
+                    ): EntitySelector(
+                        EntitySelectorConfig(domain="sensor", device_class="temperature"),
+                    ),
+                    vol.Optional(
+                        CONF_COOLING_CIRCUIT,
+                        default=current.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT),
+                    ): NumberSelector(
+                        NumberSelectorConfig(min=1, max=7, step=1, mode=NumberSelectorMode.BOX),
                     ),
                 }
             ),

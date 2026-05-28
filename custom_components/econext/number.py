@@ -20,6 +20,7 @@ from .const import (
     SILENT_MODE_SCHEDULE_NUMBERS,
     EconextNumberEntityDescription,
 )
+from .cooling.entity import build_cooling_numbers
 from .coordinator import EconextCoordinator
 from .entity import EconextEntity
 
@@ -168,6 +169,9 @@ async def async_setup_entry(
                         description.key,
                         param_id,
                     )
+
+    # Cooling controller tunables
+    entities.extend(build_cooling_numbers(coordinator))
 
     async_add_entities(entities)
 

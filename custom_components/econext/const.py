@@ -31,6 +31,13 @@ CONF_HOST = "host"
 CONF_PORT = "port"
 CONF_THERMOSTAT_ENTITY = "thermostat_temperature_entity"
 
+# Cooling controller option keys
+CONF_COOLING_ENABLED = "cooling_enabled"
+CONF_DEW_POINT_ENTITY = "cooling_dew_point_entity"
+CONF_OEM_FLOW_ENTITY = "cooling_oem_flow_entity"
+CONF_COOLING_CIRCUIT = "cooling_circuit"
+DEFAULT_COOLING_CIRCUIT = 2
+
 # Default values
 DEFAULT_PORT = 8000
 
@@ -464,6 +471,28 @@ CONTROLLER_NUMBERS: tuple[EconextNumberEntityDescription, ...] = (
         icon="mdi:counter",
         native_min_value=0,
         native_max_value=100,
+        native_step=1,
+    ),
+    # Heat-source cooling hysteresis. Must be 0 for the cooling controller's
+    # dip-and-recover start trick (factory default 5 reintroduces the
+    # firmware start-margin we bypass).
+    EconextNumberEntityDescription(
+        key="heat_source_cooling_hyst",
+        param_id="473",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        icon="mdi:snowflake-thermometer",
+        native_min_value=0,
+        native_max_value=10,
+        native_step=1,
+    ),
+    # Circuit-2 continuous-cool flag (1 = continuous). Required by the
+    # cooling controller; circuit-2 scoped but exposed here for visibility.
+    EconextNumberEntityDescription(
+        key="circuit2_cooling_down_range",
+        param_id="1311",
+        icon="mdi:snowflake",
+        native_min_value=0,
+        native_max_value=1,
         native_step=1,
     ),
 )

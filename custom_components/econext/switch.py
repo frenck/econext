@@ -17,6 +17,7 @@ from .const import (
     EconextSwitchEntityDescription,
     HEATPUMP_SWITCHES,
 )
+from .cooling.entity import build_cooling_switches
 from .coordinator import EconextCoordinator
 from .entity import EconextEntity
 
@@ -102,6 +103,9 @@ async def async_setup_entry(
     # Thermostat pairing switch
     if entry.options.get(CONF_THERMOSTAT_ENTITY):
         entities.append(ThermostatPairSwitch(coordinator))
+
+    # Cooling controller switches (enable, dry_run)
+    entities.extend(build_cooling_switches(coordinator))
 
     async_add_entities(entities)
 

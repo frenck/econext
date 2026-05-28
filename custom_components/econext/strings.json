@@ -38,10 +38,18 @@
                 "title": "ecoNEXT Gateway Settings",
                 "description": "Configure the virtual thermostat.",
                 "data": {
-                    "thermostat_temperature_entity": "Virtual thermostat temperature source"
+                    "thermostat_temperature_entity": "Virtual thermostat temperature source",
+                    "cooling_enabled": "Enable cooling controller",
+                    "cooling_dew_point_entity": "Dew point sensor (required for cooling)",
+                    "cooling_oem_flow_entity": "OEM/manifold flow temperature (optional)",
+                    "cooling_circuit": "Cooling circuit number"
                 },
                 "data_description": {
-                    "thermostat_temperature_entity": "Select a temperature sensor to enable the virtual thermostat. The reading will be submitted to the heat pump controller every 10 seconds. Leave empty to disable."
+                    "thermostat_temperature_entity": "Select a temperature sensor to enable the virtual thermostat. The reading will be submitted to the heat pump controller every 10 seconds. Leave empty to disable.",
+                    "cooling_enabled": "Run the dew-safe UFH cooling controller. Requires a dew point sensor.",
+                    "cooling_dew_point_entity": "Max dew point across cooled rooms. Without it there is no dew safety and cooling will not run.",
+                    "cooling_oem_flow_entity": "Manifold flow temperature used for dew safety. Falls back to the heat pump flow temperature if left empty.",
+                    "cooling_circuit": "Heating circuit (1-7) whose cooling this controller drives. Default 2."
                 }
             }
         }
@@ -50,6 +58,12 @@
         "binary_sensor": {
             "alarm_active": {
                 "name": "Alarm active"
+            },
+            "cooling_hp_quiet": {
+                "name": "HP quiet"
+            },
+            "cooling_schedule_active": {
+                "name": "Cooling schedule active"
             }
         },
         "climate": {
@@ -65,6 +79,30 @@
             }
         },
         "sensor": {
+            "cooling_cycle_state": {
+                "name": "Cooling cycle state",
+                "state": {
+                    "idle": "Idle",
+                    "starting": "Starting",
+                    "running": "Running",
+                    "cooldown": "Cooldown"
+                }
+            },
+            "cooling_safe_target": {
+                "name": "Cooling safe target"
+            },
+            "cooling_working_target": {
+                "name": "Cooling working target"
+            },
+            "cooling_flow_below_dew": {
+                "name": "Flow below dew point"
+            },
+            "cooling_last_running_minutes": {
+                "name": "Last cooling run"
+            },
+            "cooling_last_cycle_end": {
+                "name": "Last cooling cycle end"
+            },
             "last_alarm": {
                 "name": "Last alarm"
             },
@@ -335,6 +373,23 @@
             }
         },
         "number": {
+            "cooling_safety_margin": { "name": "Safety margin" },
+            "cooling_delta_t_est": { "name": "Delta-T estimate" },
+            "cooling_max_run_minutes": { "name": "Max run time" },
+            "cooling_min_break_minutes": { "name": "Min break time" },
+            "cooling_aborted_break_minutes": { "name": "Aborted break time" },
+            "cooling_real_cycle_threshold_minutes": { "name": "Real cycle threshold" },
+            "cooling_flow_below_dew_cutoff": { "name": "Flow below dew cutoff" },
+            "cooling_flow_below_dew_min_duration_s": { "name": "Flow below dew duration" },
+            "cooling_working_target_offset": { "name": "Working target offset" },
+            "cooling_stale_loop_flow": { "name": "Stale loop flow" },
+            "cooling_hp_quiet_minutes": { "name": "HP quiet time" },
+            "cooling_hard_floor": { "name": "Hard floor" },
+            "cooling_hard_floor_duration_s": { "name": "Hard floor duration" },
+            "cooling_panic_floor": { "name": "Panic floor" },
+            "cooling_start_timeout_minutes": { "name": "Start timeout" },
+            "cooling_dip_target": { "name": "Dip target" },
+            "cooling_cooldown_target": { "name": "Cooldown target" },
             "summer_mode_on": {
                 "name": "Summer mode on"
             },
@@ -349,6 +404,12 @@
             },
             "compressor_min_starts": {
                 "name": "Compressor min starts setting"
+            },
+            "heat_source_cooling_hyst": {
+                "name": "Heat source cooling hysteresis"
+            },
+            "circuit2_cooling_down_range": {
+                "name": "Circuit 2 continuous cooling"
             },
             "target_temperature": {
                 "name": "Target temperature"
@@ -672,6 +733,12 @@
             }
         },
         "switch": {
+            "cooling_enable": {
+                "name": "Cooling enable"
+            },
+            "cooling_dry_run": {
+                "name": "Cooling dry run"
+            },
             "cooling_support": {
                 "name": "Cooling support"
             },

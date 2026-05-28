@@ -1,0 +1,342 @@
+"""Coordinator-side driver for the cooling controller.
+
+Owns the persistent `CoolingState`, the `ScheduleDetector` and the live
+tunables, and runs one `state_machine.tick()` per coordinator refresh
+(10s). Reads every signal the state machine needs from the econext
+register cache via `coordinator.get_param_value(id)` plus two external HA
+sensors (dew point, optional OEM flow), and applies the resulting
+`Decision` through `coordinator.async_set_param(id, value)`.
+
+Pure logic lives in the sibling modules; this module is the only one that
+touches Home Assistant / the coordinator.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from datetime import datetime
+from typing import Any
+
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+
+from ..climate import CIRCUITS
+from ..const import HP_STATUS_WORK_MODE_MAPPING, decode_current_season
+from .const import (
+    COOLING_ENABLE_BIT,
+    COOLING_MAX_PUMP_SPEED,
+    COOLING_MIN_PUMP_SPEED,
+    DEFAULTS,
+    PARAM_EPSILON,
+    REG_CIRCUIT2_COOLING_DOWN_RANGE,
+    REG_COMP_HZ,
+    REG_FLOW_HP,
+    REG_HEAT_SOURCE_COOLING_HYST,
+    REG_MAX_PUMP_SPEED,
+    REG_MIN_BREAK_TIME,
+    REG_MIN_PUMP_SPEED,
+    REG_RETURN,
+    REG_SEASON,
+    REG_WORK_MODE,
+    SAFE_MODES,
+    STATE_IDLE,
+    STATE_STARTING,
+    TICK_SECONDS,
+)
+from .models import Config, CoolingState, Decision, Sensors
+from .schedule import ScheduleDetector
+from .state_machine import tick
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class CoolingDriver:
+    """Runs the cooling state machine on the econext coordinator's tick."""
+
+    def __init__(
+        self,
+        coordinator,
+        *,
+        circuit: int,
+        dew_point_entity: str | None,
+        oem_flow_entity: str | None,
+    ) -> None:
+        self.coordinator = coordinator
+        self.hass = coordinator.hass
+        self.circuit = circuit
+        self._circuit_cfg = CIRCUITS.get(circuit)
+        self.dew_point_entity = dew_point_entity
+        self.oem_flow_entity = oem_flow_entity
+
+        self.schedule_detector = ScheduleDetector()
+        self.state = CoolingState()
+        # Live tunables — the cooling device's number/switch entities push
+        # their values in via update_tunable().
+        self.tunables: dict[str, Any] = dict(DEFAULTS)
+
+        self.last_decision: Decision | None = None
+        self.last_sensors: Sensors | None = None
+        self._setup_done = False
+
+    # ---------- public API ----------
+
+    @property
+    def available(self) -> bool:
+        """True when the selected circuit exposes the cooling target register."""
+        return bool(self._circuit_cfg and self._circuit_cfg.cooling_fixed_temp_param)
+
+    @property
+    def target_param_id(self) -> str | None:
+        return self._circuit_cfg.cooling_fixed_temp_param if self._circuit_cfg else None
+
+    def update_tunable(self, key: str, value: Any) -> None:
+        """Set one tunable from its entity."""
+        self.tunables[key] = value
+
+    async def async_tick(self, now: datetime) -> None:
+        """Run one state-machine tick. Never raises into the poll loop."""
+        if not self.available:
+            return
+
+        config = self._build_config()
+        dew = self._read_entity_float(self.dew_point_entity)
+
+        # Idempotent boot-time HP setup (season + work_mode gated inside).
+        if not self._setup_done:
+            await self._assert_setup_params(config.dry_run)
+            self._setup_done = True
+
+        # Dew-safety gate: without a dew-point reading there is no dew
+        # protection, so we must not cool. Wind down any active cycle.
+        if dew is None:
+            if self.state.cycle_state != STATE_IDLE:
+                _LOGGER.warning(
+                    "Cooling: dew-point sensor %s unavailable mid-cycle; forcing cooldown",
+                    self.dew_point_entity,
+                )
+                await self._write_target(config.cooldown_target, config.dry_run)
+                self._reset_to_idle(now)
+            return
+
+        sensors = self._build_sensors(now, dew, config)
+        self.last_sensors = sensors
+
+        decision = tick(self.state, sensors, config, now, TICK_SECONDS)
+        self.last_decision = decision
+        await self._apply_decision(decision, config, now)
+
+    def status(self) -> dict[str, Any]:
+        """Diagnostic snapshot for the cooling-controller entities."""
+        s = self.last_sensors
+        return {
+            "available": self.available,
+            "circuit": self.circuit,
+            "cycle_state": self.state.cycle_state,
+            "last_running_minutes": self.state.last_running_minutes,
+            "last_cycle_end": self.state.last_cycle_end,
+            "safe_target": s.safe_target if s else None,
+            "flow_below_dew": s.flow_below_dew if s else None,
+            "schedule_active": s.schedule_active if s else None,
+            "schedule_stats": self.schedule_detector.stats(),
+        }
+
+    # ---------- reading ----------
+
+    def _build_sensors(self, now: datetime, dew: float, config: Config) -> Sensors:
+        c = self._circuit_cfg
+        coord = self.coordinator
+
+        raw_mode = coord.get_param_value(REG_WORK_MODE)
+        work_mode = (
+            HP_STATUS_WORK_MODE_MAPPING.get(int(raw_mode))
+            if raw_mode is not None
+            else None
+        )
+        self.schedule_detector.observe(work_mode, now)
+
+        flow_hp = self._param_float(REG_FLOW_HP, 0.0)
+        flow_oem = self._read_entity_float(self.oem_flow_entity)
+        if flow_oem is None:
+            flow_oem = flow_hp
+
+        # Cooling demand thermostat; fall back to room setpoint so demand
+        # reads neutral (no spurious start/stop) when the sensor is missing.
+        room_target = self._param_float(c.room_temp_setpoint_param, float(self.tunables["room_target"]))
+        thermostat_temp = self._param_float(c.thermostat_param, room_target)
+
+        season = decode_current_season(coord.get_param_value(REG_SEASON) or 0)
+        cooling_bit_on = self._circuit_cooling_enabled()
+
+        safe_target = self._compute_safe_target(dew, config)
+
+        return Sensors(
+            work_mode=work_mode,
+            comp_hz=self._param_float(REG_COMP_HZ, 0.0),
+            flow_hp=flow_hp,
+            flow_oem=flow_oem,
+            return_temp=self._param_float(REG_RETURN, 0.0),
+            current_target=self._param_float(c.cooling_fixed_temp_param, 20.0),
+            dew_max=dew,
+            thermostat_temp=thermostat_temp,
+            enable_switch_on=bool(self.tunables["enable"]) and cooling_bit_on,
+            season_is_summer=(season == "summer"),
+            schedule_active=self.schedule_detector.is_schedule_active(now),
+            safe_target=safe_target,
+            flow_below_dew=round(flow_oem - dew, 2),
+        )
+
+    def _build_config(self) -> Config:
+        t = self.tunables
+        # room_target tracks the live circuit setpoint; falls back to tunable.
+        room_target = self._param_float(
+            self._circuit_cfg.room_temp_setpoint_param, float(t["room_target"])
+        )
+        return Config(
+            safety_margin=float(t["safety_margin"]),
+            delta_t_est=float(t["delta_t_est"]),
+            max_run_minutes=float(t["max_run_minutes"]),
+            min_break_minutes=float(t["min_break_minutes"]),
+            aborted_break_minutes=float(t["aborted_break_minutes"]),
+            real_cycle_threshold_minutes=float(t["real_cycle_threshold_minutes"]),
+            flow_below_dew_cutoff=float(t["flow_below_dew_cutoff"]),
+            flow_below_dew_min_duration_s=float(t["flow_below_dew_min_duration_s"]),
+            room_target=room_target,
+            working_target_offset=float(t["working_target_offset"]),
+            stale_loop_flow=float(t["stale_loop_flow"]),
+            hp_quiet_minutes=float(t["hp_quiet_minutes"]),
+            hard_floor=float(t["hard_floor"]),
+            hard_floor_duration_s=float(t["hard_floor_duration_s"]),
+            panic_floor=float(t["panic_floor"]),
+            start_timeout_minutes=float(t["start_timeout_minutes"]),
+            dip_target=float(t["dip_target"]),
+            cooldown_target=float(t["cooldown_target"]),
+            dry_run=bool(t["dry_run"]),
+            enable=bool(t["enable"]),
+        )
+
+    def _compute_safe_target(self, dew: float, config: Config) -> int:
+        """ceil(dp + 1 + delta_t_est + safety_margin), clamped to [16, 27]."""
+        if dew <= 0:
+            return 22
+        raw = dew + 1 + config.delta_t_est + config.safety_margin
+        return max(16, min(27, math.ceil(raw)))
+
+    def _circuit_cooling_enabled(self) -> bool:
+        """Bit 17 of the circuit's settings register = cooling enabled."""
+        raw = self.coordinator.get_param_value(self._circuit_cfg.settings_param)
+        if raw is None:
+            return False
+        return ((int(raw) >> COOLING_ENABLE_BIT) & 1) == 1
+
+    def _param_float(self, param_id: str | int | None, default: float) -> float:
+        if param_id is None:
+            return default
+        value = self.coordinator.get_param_value(param_id)
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _read_entity_float(self, entity_id: str | None) -> float | None:
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE, "none", ""):
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    # ---------- writing ----------
+
+    async def _apply_decision(self, decision: Decision, config: Config, now: datetime) -> None:
+        if decision.log_message:
+            log = _LOGGER.warning if decision.log_level == "WARNING" else _LOGGER.info
+            log("Cooling: %s", decision.log_message)
+
+        if decision.target_write is not None:
+            await self._write_target(float(decision.target_write), config.dry_run)
+
+        if decision.new_state is not None and decision.new_state != self.state.cycle_state:
+            _LOGGER.info("Cooling: state %s -> %s", self.state.cycle_state, decision.new_state)
+            if decision.new_state == STATE_STARTING:
+                await self._assert_pump_speeds(config.dry_run)
+            self.state.cycle_state = decision.new_state
+            self.state.state_entered = now
+
+        if decision.finalize:
+            self.state.last_running_minutes = round(self.state.running_comp_on_seconds / 60.0, 1)
+            self.state.running_comp_on_seconds = 0.0
+            self.state.below_dew_streak_s = 0.0
+            self.state.hard_floor_streak_s = 0.0
+            self.state.last_cycle_end = now
+
+    def _reset_to_idle(self, now: datetime) -> None:
+        self.state.cycle_state = STATE_IDLE
+        self.state.state_entered = now
+        self.state.running_comp_on_seconds = 0.0
+        self.state.below_dew_streak_s = 0.0
+        self.state.hard_floor_streak_s = 0.0
+        self.state.last_cycle_end = now
+
+    async def _write_target(self, value: float, dry_run: bool) -> None:
+        """Write the circuit cooling target, debounced on last_target_written."""
+        if (
+            self.state.last_target_written is not None
+            and abs(self.state.last_target_written - value) < 0.5
+        ):
+            return
+        self.state.last_target_written = value
+
+        if dry_run:
+            _LOGGER.info("Cooling [dry-run]: would set target %s = %s", self.target_param_id, value)
+            return
+        await self.coordinator.async_set_param(self.target_param_id, value)
+        _LOGGER.info("Cooling: set target %s = %s", self.target_param_id, value)
+
+    async def _assert_setup_params(self, dry_run: bool) -> None:
+        """Idempotently assert the one-time HP setup params."""
+        await self._assert_param(REG_HEAT_SOURCE_COOLING_HYST, 0, dry_run)
+        await self._assert_param(REG_MIN_BREAK_TIME, 5, dry_run)
+        # The continuous-cool flag register is only known for circuit 2.
+        if self.circuit == 2:
+            await self._assert_param(REG_CIRCUIT2_COOLING_DOWN_RANGE, 1, dry_run)
+        else:
+            _LOGGER.debug(
+                "Cooling: continuous-cool flag register unknown for circuit %d; skipping",
+                self.circuit,
+            )
+
+    async def _assert_pump_speeds(self, dry_run: bool) -> None:
+        """Assert cooling pump speeds (max before min), season + work_mode gated."""
+        season = decode_current_season(self.coordinator.get_param_value(REG_SEASON) or 0)
+        if season != "summer":
+            return
+        raw_mode = self.coordinator.get_param_value(REG_WORK_MODE)
+        work_mode = HP_STATUS_WORK_MODE_MAPPING.get(int(raw_mode)) if raw_mode is not None else None
+        if work_mode not in SAFE_MODES:
+            return
+        # Max must be set before min — min cannot exceed the current max.
+        await self._assert_param(REG_MAX_PUMP_SPEED, COOLING_MAX_PUMP_SPEED, dry_run)
+        await self._assert_param(REG_MIN_PUMP_SPEED, COOLING_MIN_PUMP_SPEED, dry_run)
+
+    async def _assert_param(self, param_id: int, target: float, dry_run: bool) -> None:
+        """Write `target` to `param_id` only if it has drifted from spec."""
+        current = self.coordinator.get_param_value(param_id)
+        if current is not None:
+            try:
+                if abs(float(current) - target) < PARAM_EPSILON:
+                    return
+            except (TypeError, ValueError):
+                pass
+        if dry_run:
+            _LOGGER.info("Cooling [dry-run]: would assert %s = %s", param_id, target)
+            return
+        try:
+            await self.coordinator.async_set_param(param_id, target)
+            _LOGGER.info("Cooling: asserted setup param %s = %s", param_id, target)
+        except Exception as exc:  # noqa: BLE001 - setup writes are best-effort
+            _LOGGER.warning("Cooling: failed to assert %s = %s: %s", param_id, target, exc)

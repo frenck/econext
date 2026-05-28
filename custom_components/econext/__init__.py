@@ -10,7 +10,18 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import EconextConnectionError, EconextApi
-from .const import CONF_THERMOSTAT_ENTITY, DEFAULT_PORT, DOMAIN, PLATFORMS
+from .const import (
+    CONF_COOLING_CIRCUIT,
+    CONF_COOLING_ENABLED,
+    CONF_DEW_POINT_ENTITY,
+    CONF_OEM_FLOW_ENTITY,
+    CONF_THERMOSTAT_ENTITY,
+    DEFAULT_COOLING_CIRCUIT,
+    DEFAULT_PORT,
+    DOMAIN,
+    PLATFORMS,
+)
+from .cooling.driver import CoolingDriver
 from .coordinator import EconextCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +50,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: EconextConfigEntry) -> b
         await coordinator.async_config_entry_first_refresh()
     except EconextConnectionError as err:
         raise ConfigEntryNotReady(f"Connection failed: {err}") from err
+
+    # Optional cooling controller — enabled and dew-point sensor configured.
+    if entry.options.get(CONF_COOLING_ENABLED) and entry.options.get(CONF_DEW_POINT_ENTITY):
+        coordinator.cooling_driver = CoolingDriver(
+            coordinator,
+            circuit=int(entry.options.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT)),
+            dew_point_entity=entry.options.get(CONF_DEW_POINT_ENTITY),
+            oem_flow_entity=entry.options.get(CONF_OEM_FLOW_ENTITY),
+        )
+        if not coordinator.cooling_driver.available:
+            _LOGGER.warning(
+                "Cooling enabled but circuit %s has no cooling registers; disabling",
+                entry.options.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT),
+            )
+            coordinator.cooling_driver = None
 
     # Store coordinator
     entry.runtime_data = coordinator
