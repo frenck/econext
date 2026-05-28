@@ -123,6 +123,25 @@ class CoolingDriver:
 
         decision = tick(self.state, sensors, config, now, TICK_SECONDS)
         self.last_decision = decision
+
+        # Per-tick decision line so a dry-run shadow can be diffed tick-for-tick
+        # against the live standalone controller.
+        _LOGGER.info(
+            "Cooling tick: dry_run=%s state=%s work_mode=%s comp=%.0f thermostat=%.1f "
+            "room=%.1f dew=%.1f safe=%s flow_below_dew=%.2f -> new_state=%s target_write=%s",
+            config.dry_run,
+            self.state.cycle_state,
+            sensors.work_mode,
+            sensors.comp_hz,
+            sensors.thermostat_temp,
+            config.room_target,
+            sensors.dew_max,
+            sensors.safe_target,
+            sensors.flow_below_dew,
+            decision.new_state,
+            decision.target_write,
+        )
+
         await self._apply_decision(decision, config, now)
 
     def status(self) -> dict[str, Any]:
