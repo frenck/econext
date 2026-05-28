@@ -84,7 +84,9 @@ class CoolingControllerEntity(CoordinatorEntity[EconextCoordinator]):
         uid = self.coordinator.get_device_uid()
         return DeviceInfo(
             identifiers={(DOMAIN, f"{uid}_{COOLING_DEVICE_ID}")},
-            name="Cooling Controller",
+            # Distinct from the standalone "Cooling Controller" integration so
+            # entity_ids don't collide while both run in parallel.
+            name="Cooling (econext)",
             manufacturer=MANUFACTURER,
             via_device=(DOMAIN, uid),
         )
