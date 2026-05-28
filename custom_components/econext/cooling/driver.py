@@ -96,10 +96,18 @@ class CoolingDriver:
     async def async_tick(self, now: datetime) -> None:
         """Run one state-machine tick. Never raises into the poll loop."""
         if not self.available:
+            _LOGGER.debug("Cooling async_tick: not available (circuit %s)", self.circuit)
             return
 
         config = self._build_config()
         dew = self._read_entity_float(self.dew_point_entity)
+        _LOGGER.debug(
+            "Cooling async_tick: state=%s dew_entity=%s dew=%s setup_done=%s",
+            self.state.cycle_state,
+            self.dew_point_entity,
+            dew,
+            self._setup_done,
+        )
 
         # Idempotent boot-time HP setup (season + work_mode gated inside).
         if not self._setup_done:
@@ -116,6 +124,11 @@ class CoolingDriver:
                 )
                 await self._write_target(config.cooldown_target, config.dry_run)
                 self._reset_to_idle(now)
+            else:
+                _LOGGER.info(
+                    "Cooling tick: idle, skipped — no dew reading from %s",
+                    self.dew_point_entity,
+                )
             return
 
         sensors = self._build_sensors(now, dew, config)
