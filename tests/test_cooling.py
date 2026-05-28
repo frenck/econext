@@ -71,21 +71,21 @@ def test_full_cycle_idle_to_idle():
     now += timedelta(seconds=30)
     d = tick(
         state,
-        _sensors(work_mode="cooling", comp_hz=30.0, flow_hp=14.0, return_temp=20.0, current_target=16.0),
+        _sensors(work_mode="cooling", comp_hz=30.0, flow_hp=14.0, return_temp=20.0, current_target=15.0),
         config,
         now,
         TICK,
     )
     assert d.new_state == STATE_RUNNING
-    # working_target = max(safe_target - offset, dip_target) = max(14, 16) = 16
-    assert d.target_write == 16
+    # working_target = max(safe_target - offset, dip_target) = max(14, 15) = 15
+    assert d.target_write == 15
     _apply(state, d, now)
 
     # running stays running while demand persists; comp-on time accrues.
     now += timedelta(seconds=60)
     d = tick(
         state,
-        _sensors(work_mode="cooling", comp_hz=30.0, flow_hp=14.0, return_temp=20.0, current_target=16.0),
+        _sensors(work_mode="cooling", comp_hz=30.0, flow_hp=14.0, return_temp=20.0, current_target=15.0),
         config,
         now,
         TICK,
@@ -98,7 +98,7 @@ def test_full_cycle_idle_to_idle():
     now += timedelta(seconds=60)
     d = tick(
         state,
-        _sensors(work_mode="cooling", comp_hz=30.0, flow_hp=14.0, return_temp=20.0, current_target=16.0, thermostat_temp=21.0),
+        _sensors(work_mode="cooling", comp_hz=30.0, flow_hp=14.0, return_temp=20.0, current_target=15.0, thermostat_temp=21.0),
         config,
         now,
         TICK,
