@@ -74,6 +74,9 @@ DEFAULTS: dict[str, float | bool] = {
     "start_timeout_minutes": 4.0,
     "dip_target": 15.0,
     "cooldown_target": 25.0,
-    "dry_run": False,
+    # Default ON so a freshly-enabled controller observes only (no writes)
+    # until an operator explicitly flips dry_run off at cutover. This makes
+    # it safe to run as a shadow alongside another active controller.
+    "dry_run": True,
     "enable": True,
 }
