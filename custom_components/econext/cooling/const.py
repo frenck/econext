@@ -48,6 +48,11 @@ SETUP_PARAMS: list[tuple[int, float]] = [
 COOLING_MAX_PUMP_SPEED = 100
 COOLING_MIN_PUMP_SPEED = 85
 
+# Hard floor on the cooling-water target written to the HP. The dip-to-start
+# would otherwise command 15; on a high-dew day that drives flow too far below
+# dew point. Never command the circuit cooling target below this.
+MIN_TARGET_TEMP = 16
+
 # Float epsilon for setup-param idempotency comparison.
 PARAM_EPSILON = 0.05
 

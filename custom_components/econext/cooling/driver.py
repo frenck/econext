@@ -29,6 +29,7 @@ from .const import (
     COOLING_MAX_PUMP_SPEED,
     COOLING_MIN_PUMP_SPEED,
     DEFAULTS,
+    MIN_TARGET_TEMP,
     PARAM_EPSILON,
     REG_CIRCUIT2_COOLING_DOWN_RANGE,
     REG_COMP_HZ,
@@ -397,7 +398,12 @@ class CoolingDriver:
         self._persist()
 
     async def _write_target(self, value: float, dry_run: bool) -> None:
-        """Write the circuit cooling target, debounced on last_target_written."""
+        """Write the circuit cooling target, debounced on last_target_written.
+
+        Hard-floored at MIN_TARGET_TEMP so a dip-to-start never commands the HP
+        below the configured minimum (dew-margin protection on high-dew days).
+        """
+        value = max(float(value), float(MIN_TARGET_TEMP))
         if (
             self.state.last_target_written is not None
             and abs(self.state.last_target_written - value) < 0.5

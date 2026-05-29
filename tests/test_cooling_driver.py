@@ -88,14 +88,15 @@ async def test_dry_run_makes_no_writes_but_advances_state():
     assert driver.last_decision.target_write == driver.tunables["dip_target"]
 
 
-async def test_live_start_writes_dip_target():
+async def test_live_start_writes_dip_target_floored_at_16():
     driver, coord = _driver(_demand_params(), dry_run=False)
     await driver.async_tick(dt_util.now())
 
     assert driver.state.cycle_state == STATE_STARTING
-    # Setup params already at spec + pump speeds already correct -> only the
-    # dip-target write to the circuit cooling register.
-    assert (str(C2.cooling_fixed_temp_param), 15.0) in coord.writes
+    # dip_target is 15 but the hard floor (MIN_TARGET_TEMP=16) caps the write;
+    # never command the HP below 16.
+    assert (str(C2.cooling_fixed_temp_param), 16.0) in coord.writes
+    assert not any(w[0] == str(C2.cooling_fixed_temp_param) and w[1] < 16.0 for w in coord.writes)
 
 
 async def test_setup_params_asserted_when_drifted():
