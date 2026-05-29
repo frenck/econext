@@ -37,6 +37,7 @@ from .const import (
     REG_MAX_PUMP_SPEED,
     REG_MIN_BREAK_TIME,
     REG_MIN_PUMP_SPEED,
+    PREEMPT_MODES,
     REG_RETURN,
     REG_SEASON,
     REG_WORK_MODE,
@@ -139,11 +140,29 @@ class CoolingDriver:
         if self._store is not None:
             self._store.async_delay_save(self._state_to_dict, 10)
 
+    def _observe_for_tracking(self, now: datetime) -> str | None:
+        """Track work_mode-derived state every tick — even when the dew gate
+        below skips the state machine — so hp_quiet (`last_preempt_active_at`)
+        and the schedule flap detector stay accurate across dew-sensor gaps.
+        The standalone always ticks (it uses an 18.0 dew fallback); skipping
+        this during dew gaps would let hp_quiet go stale and cause premature
+        starts once dew returns.
+        """
+        raw_mode = self.coordinator.get_param_value(REG_WORK_MODE)
+        work_mode = HP_STATUS_WORK_MODE_MAPPING.get(int(raw_mode)) if raw_mode is not None else None
+        self.schedule_detector.observe(work_mode, now)
+        if work_mode in PREEMPT_MODES:
+            self.state.last_preempt_active_at = now
+        return work_mode
+
     async def async_tick(self, now: datetime) -> None:
         """Run one state-machine tick. Never raises into the poll loop."""
         if not self.available:
             _LOGGER.debug("Cooling async_tick: not available (circuit %s)", self.circuit)
             return
+
+        # Always track HP activity (hp_quiet + schedule) regardless of dew.
+        self._observe_for_tracking(now)
 
         config = self._build_config()
         dew = self._read_entity_float(self.dew_point_entity)
@@ -230,7 +249,8 @@ class CoolingDriver:
             if raw_mode is not None
             else None
         )
-        self.schedule_detector.observe(work_mode, now)
+        # schedule_detector.observe() and last_preempt tracking happen once per
+        # tick in _observe_for_tracking(), before the dew gate.
 
         flow_hp = self._param_float(REG_FLOW_HP, 0.0)
         flow_oem = self._read_entity_float(self.oem_flow_entity)

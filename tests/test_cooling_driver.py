@@ -107,6 +107,20 @@ async def test_setup_params_asserted_when_drifted():
     assert ("473", 0) in coord.writes
 
 
+async def test_preempt_tracked_even_when_dew_missing():
+    # Even with no dew reading (state machine skipped), hp_quiet tracking must
+    # still advance so it doesn't go stale across a dew gap.
+    params = _demand_params()
+    params[1350] = 1  # work_mode heating (a PREEMPT mode)
+    driver, coord = _driver(params, dew="unavailable", dry_run=True)
+    assert driver.state.last_preempt_active_at is None
+    await driver.async_tick(dt_util.now())
+
+    assert driver.state.last_preempt_active_at is not None  # tracked despite dew gap
+    assert coord.writes == []  # still no writes (idle + dry-run)
+    assert driver.state.cycle_state == STATE_IDLE
+
+
 async def test_no_dew_keeps_idle_and_silent():
     driver, coord = _driver(_demand_params(), dew="unavailable", dry_run=False)
     await driver.async_tick(dt_util.now())
