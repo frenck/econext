@@ -82,6 +82,11 @@ class CoolingDriver:
         self.last_decision: Decision | None = None
         self.last_sensors: Sensors | None = None
         self._setup_done = False
+        # Last-known value per register, so a transient gateway poll gap holds
+        # the previous reading instead of snapping to a fixed default. The
+        # standalone reads sticky HA sensors; a fixed room-setpoint fallback
+        # (e.g. 22.0) would otherwise fabricate cooling demand on any 92 gap.
+        self._last_known: dict[str, float] = {}
 
     # ---------- public API ----------
 
@@ -327,15 +332,23 @@ class CoolingDriver:
         return ((int(raw) >> COOLING_ENABLE_BIT) & 1) == 1
 
     def _param_float(self, param_id: str | int | None, default: float) -> float:
+        """Read a register as float, holding the last-known value across a
+        transient poll gap. Only falls to `default` if the register has never
+        been seen (matches the standalone's sticky-HA-sensor behaviour and
+        avoids fabricating demand when e.g. the room setpoint momentarily
+        drops out of the gateway response)."""
         if param_id is None:
             return default
+        key = str(param_id)
         value = self.coordinator.get_param_value(param_id)
         if value is None:
-            return default
+            return self._last_known.get(key, default)
         try:
-            return float(value)
+            f = float(value)
         except (TypeError, ValueError):
-            return default
+            return self._last_known.get(key, default)
+        self._last_known[key] = f
+        return f
 
     def _read_entity_float(self, entity_id: str | None) -> float | None:
         if not entity_id:

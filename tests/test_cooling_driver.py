@@ -206,6 +206,21 @@ async def test_state_restored_on_load():
     assert driver.state.last_cycle_end is not None
 
 
+async def test_room_setpoint_is_sticky_across_param_gap():
+    # A momentary gateway gap on register 92 must NOT drop room_target to the
+    # fixed 22.0 default and fabricate demand; it should hold the last value.
+    params = _demand_params()
+    params[C2.room_temp_setpoint_param] = 24  # distinct from the 22.0 static default
+    driver, coord = _driver(params, dry_run=True)
+    # First tick caches 92 = 24.0.
+    await driver.async_tick(dt_util.now())
+    assert driver._last_known[str(C2.room_temp_setpoint_param)] == 24.0
+    # Now 92 drops out of the gateway response.
+    coord._params.pop(str(C2.room_temp_setpoint_param))
+    cfg = driver._build_config()
+    assert cfg.room_target == 24.0  # held last value, not the 22.0 default
+
+
 async def test_oem_flow_falls_back_to_hp_flow():
     driver, coord = _driver(_demand_params(), dry_run=True)
     await driver.async_tick(dt_util.now())
