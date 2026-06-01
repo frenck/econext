@@ -133,6 +133,7 @@ async def async_setup_entry(
                         native_step=description.native_step,
                         min_value_param_id=description.min_value_param_id,
                         max_value_param_id=description.max_value_param_id,
+                        unique_id_key=description.unique_id_key,
                     )
                     entities.append(EconextNumber(coordinator, circuit_desc, device_id=f"circuit_{circuit_num}"))
                 else:
@@ -256,6 +257,17 @@ class EconextNumber(EconextEntity, NumberEntity):
 
         self._description = description
         self._attr_translation_key = description.key
+
+        # Override unique_id with a stable key when the entity's underlying
+        # register can change (e.g. heating_curve flipping between
+        # radiator/floor/fan_coil curves). Without this, a type change would
+        # orphan the old entity and create a fresh one with a new unique_id.
+        if description.unique_id_key:
+            uid = coordinator.get_device_uid()
+            if device_id:
+                self._attr_unique_id = f"{uid}_{device_id}_{description.unique_id_key}"
+            else:
+                self._attr_unique_id = f"{uid}_{description.unique_id_key}"
 
         # Apply description attributes
         if description.native_unit_of_measurement:

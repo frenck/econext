@@ -166,6 +166,12 @@ class EconextOptionsFlow(OptionsFlow):
         current_entity = current.get(CONF_THERMOSTAT_ENTITY)
         current_dew = current.get(CONF_DEW_POINT_ENTITY)
         current_oem = current.get(CONF_OEM_FLOW_ENTITY)
+        # Only circuits 1-3 are supported cooling targets; if an older entry
+        # has a higher value stored, fall back to the default for display so
+        # the NumberSelector doesn't reject it.
+        current_circuit = current.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT)
+        if not 1 <= int(current_circuit) <= 3:
+            current_circuit = DEFAULT_COOLING_CIRCUIT
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -194,9 +200,9 @@ class EconextOptionsFlow(OptionsFlow):
                     ),
                     vol.Optional(
                         CONF_COOLING_CIRCUIT,
-                        default=current.get(CONF_COOLING_CIRCUIT, DEFAULT_COOLING_CIRCUIT),
+                        default=current_circuit,
                     ): NumberSelector(
-                        NumberSelectorConfig(min=1, max=7, step=1, mode=NumberSelectorMode.BOX),
+                        NumberSelectorConfig(min=1, max=3, step=1, mode=NumberSelectorMode.BOX),
                     ),
                 }
             ),

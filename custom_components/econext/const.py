@@ -255,6 +255,11 @@ class EconextNumberEntityDescription:
     native_step: float = 1.0
     min_value_param_id: str | None = None  # Dynamic min from another param's value
     max_value_param_id: str | None = None  # Dynamic max from another param's value
+    # When set, the entity's unique_id uses this stable key instead of the
+    # param_id. Use for entities whose underlying register varies with circuit
+    # config (e.g. heating_curve switches between radiator/floor/fan_coil
+    # registers); a stable unique_id keeps the same entity_id across changes.
+    unique_id_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1469,6 +1474,9 @@ CIRCUIT_NUMBERS: tuple[EconextNumberEntityDescription, ...] = (
         native_min_value=0.0,
         native_max_value=4.0,
         native_step=0.1,
+        # Stable unique_id so changing the circuit type (radiator/ufh/fan_coil)
+        # — and therefore the underlying curve register — keeps the same entity.
+        unique_id_key="heating_curve",
     ),
     # Curve shift
     EconextNumberEntityDescription(

@@ -23,6 +23,7 @@ from .const import (
     PLATFORMS,
 )
 from .cooling.driver import CoolingDriver
+from .cooling.migrate import async_ensure_fan_coil, async_migrate_heating_curve_unique_ids
 from .coordinator import EconextCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,6 +73,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: EconextConfigEntry) -> b
             coordinator.cooling_driver = None
         else:
             await coordinator.cooling_driver.async_load()
+            # Idempotently switch the controlled circuit to fan_coil so the HP
+            # runs the right control law; carries the existing heating curve
+            # value over to the fan_coil curve register first.
+            try:
+                await async_ensure_fan_coil(coordinator, coordinator.cooling_driver.circuit)
+            except Exception:  # noqa: BLE001 - never break entry setup
+                _LOGGER.exception("Cooling: fan_coil migration failed")
 
     # Store coordinator
     entry.runtime_data = coordinator
@@ -79,6 +87,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: EconextConfigEntry) -> b
 
     # Listen for options changes
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+
+    # Rename legacy param-id-based heating_curve unique_ids before platforms
+    # re-create entities under the new stable form.
+    async_migrate_heating_curve_unique_ids(hass, entry)
 
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
