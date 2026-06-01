@@ -25,6 +25,7 @@ from .const import (
     decode_active_mode,
     get_alarm_name,
 )
+from .cooling.entity import build_cooling_sensors
 from .coordinator import EconextCoordinator
 from .entity import EconextEntity
 
@@ -272,6 +273,9 @@ async def async_setup_entry(
         entities.append(ThermostatTemperatureSensor(coordinator))
         entities.append(ThermostatStateSensor(coordinator))
         entities.append(ThermostatSourceSensor(coordinator, entry.options[CONF_THERMOSTAT_ENTITY]))
+
+    # Cooling controller status sensors
+    entities.extend(build_cooling_sensors(coordinator))
 
     async_add_entities(entities)
 

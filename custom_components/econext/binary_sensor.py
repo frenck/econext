@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, get_alarm_name
+from .cooling.entity import build_cooling_binary_sensors
 from .coordinator import EconextCoordinator
 from .entity import EconextEntity
 
@@ -21,7 +22,9 @@ async def async_setup_entry(
     """Set up ecoNEXT binary sensor entities from a config entry."""
     coordinator: EconextCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
-    async_add_entities([EconextAlarmActiveBinarySensor(coordinator)])
+    entities: list[BinarySensorEntity] = [EconextAlarmActiveBinarySensor(coordinator)]
+    entities.extend(build_cooling_binary_sensors(coordinator))
+    async_add_entities(entities)
 
 
 class EconextAlarmActiveBinarySensor(EconextEntity, BinarySensorEntity):

@@ -18,6 +18,7 @@ This integration connects to an econext-gateway running on your local network, p
 - Binary sensors for alarm states
 - Button entities for heat pump commands
 - Virtual thermostat emulation (use HA temperature sensors as heat pump input)
+- Dew-safe UFH cooling controller (beta) — drives a fan-coil circuit's cooling cycle with condensation protection, using your dew-point sensor
 
 ## Requirements
 
@@ -105,6 +106,85 @@ After configuration, the device shows:
 - **State stuck on "Pairing requested"** — the panel was not in pairing mode within the 60s window. Re-press the Pair button after putting the panel into pairing mode.
 - **State shows "Stale"** — the configured source sensor stopped publishing updates. Check the source entity in HA; the gateway falls back to a fixed bus temperature (19 C by default) until updates resume.
 - **No Virtual Thermostat device appears** — verify the gateway is reachable and `GET http://<gateway>:8000/api/thermostat/status` returns `"enabled": true`. If `enabled` is false, the gateway was installed before thermostat support was on by default — re-run the gateway installer or set `ECONEXT_THERMOSTAT_ENABLED=true` and restart it.
+
+## Cooling Controller (beta)
+
+A dew-safe UFH cooling controller built into the integration. When there is
+cooling demand on the selected circuit, it drives the heat pump's
+cooling-water target through a small state machine that "dips" the target
+low to force the HP to start, holds a dew-safe working target while running,
+and force-stops before the loop flow falls far enough below room dew point
+to risk condensation on the pipes. It adds the dew-point protection the HP
+firmware does not have.
+
+The controller is **off by default**. It only does anything once you enable
+it and pick a dew-point sensor in the integration's options.
+
+### Prerequisites
+
+- A dew-point sensor for the cooled rooms — **required**. Without it there
+  is no dew safety and the controller refuses to cool. Any sensor that
+  reports a dew temperature works (e.g. a
+  [thermal_comfort](https://github.com/dolezsa/thermal_comfort) max-dew-point
+  sensor across the cooled rooms).
+- An OEM/manifold flow-temperature sensor — **optional**. If provided it is
+  used in preference to the heat pump's internal flow reading for dew
+  safety; if absent the integration falls back to the HP flow temperature.
+- The circuit you want to cool must be a circuit the cooling controller
+  supports (1–3).
+
+### Setup
+
+1. Go to **Settings** > **Devices & Services** > **ecoNEXT** > **Configure**.
+2. Set **Enable cooling controller** on.
+3. Pick the **Dew point sensor** (required) and, if you have one, the
+   **OEM/manifold flow temperature**.
+4. Choose the **Cooling circuit** (1–3, default 2).
+5. Save. The integration reloads and a new **Cooling (econext)** device
+   appears.
+
+On first save the integration will, if needed, copy your existing heating
+curve value over to the fan-coil curve register and then switch the chosen
+circuit to **fan_coil** so the HP runs the right control law. This is
+idempotent — a no-op if the circuit is already fan_coil. The same heating
+curve entity stays at the same `entity_id`.
+
+### Cooling (econext) device
+
+The new device exposes:
+
+- **Switches** — `Cooling enable` (master), `Cooling dry run` (no real
+  writes; observe-only).
+- **Sensors** — `Cooling cycle state` (idle/starting/running/cooldown),
+  `Cooling safe target`, `Cooling working target`, `Flow below dew point`,
+  `Last cooling run`, `Last cooling cycle end`.
+- **Binary sensors** — `HP quiet`, `Cooling schedule active`.
+- **Number tunables** — production-tuned defaults are loaded on first run
+  (working-target offset, soft / hard / panic floors and durations,
+  break/timeout/max-run minutes, dip / cooldown targets, etc.). Each is a
+  RestoreNumber so adjustments survive restarts.
+
+### Recommended first-run
+
+Leave **Cooling dry run** on for a day. Watch
+`sensor.cooling_econext_cooling_cycle_state` and `Flow below dew point`
+across a real demand period — every decision is also logged at INFO under
+`custom_components.econext.cooling.driver` if you enable that logger. When
+you're satisfied, turn dry-run off to let the controller drive the HP.
+
+### Notes & limitations (beta)
+
+- The cooling target is hard-floored at **16 °C** — the dip-to-start can't
+  command the HP below that, to preserve dew margin on high-dew days.
+- On dew-sensor outage the controller skips starting and, if running, winds
+  the current cycle down.
+- Compressor / pump-speed assertions are season- and work-mode-gated so the
+  controller never touches the heating values.
+- The cooling feature is gated entirely behind the **Enable cooling
+  controller** option — turn it off and no cooling entities, writes or
+  bookkeeping happen.
+- Beta caveat: this is a new feature, please share logs (especially any
+  near-trip on `Flow below dew point`) before tuning the defaults.
 
 ## Supported Devices
 

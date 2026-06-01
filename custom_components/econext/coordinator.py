@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 
@@ -36,6 +37,9 @@ class EconextCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._thermostat_entity_id = thermostat_entity_id
         self.thermostat_status: dict[str, Any] | None = None
         self.thermostat_source_state: str = "ok"
+        # Optional cooling controller; attached by async_setup_entry when the
+        # cooling feature is enabled. Ticked at the end of each refresh.
+        self.cooling_driver: Any | None = None
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         """Fetch data from the API."""
@@ -58,6 +62,13 @@ class EconextCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             self.thermostat_status = await self.api.async_get_thermostat_status()
         except Exception:
             _LOGGER.debug("Failed to fetch thermostat status")
+
+        # Run the cooling controller tick (non-fatal — must never break the poll)
+        if self.cooling_driver is not None:
+            try:
+                await self.cooling_driver.async_tick(dt_util.now())
+            except Exception:
+                _LOGGER.exception("Cooling controller tick failed")
 
         return params
 

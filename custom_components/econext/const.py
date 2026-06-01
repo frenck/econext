@@ -31,6 +31,13 @@ CONF_HOST = "host"
 CONF_PORT = "port"
 CONF_THERMOSTAT_ENTITY = "thermostat_temperature_entity"
 
+# Cooling controller option keys
+CONF_COOLING_ENABLED = "cooling_enabled"
+CONF_DEW_POINT_ENTITY = "cooling_dew_point_entity"
+CONF_OEM_FLOW_ENTITY = "cooling_oem_flow_entity"
+CONF_COOLING_CIRCUIT = "cooling_circuit"
+DEFAULT_COOLING_CIRCUIT = 2
+
 # Default values
 DEFAULT_PORT = 8000
 
@@ -248,6 +255,11 @@ class EconextNumberEntityDescription:
     native_step: float = 1.0
     min_value_param_id: str | None = None  # Dynamic min from another param's value
     max_value_param_id: str | None = None  # Dynamic max from another param's value
+    # When set, the entity's unique_id uses this stable key instead of the
+    # param_id. Use for entities whose underlying register varies with circuit
+    # config (e.g. heating_curve switches between radiator/floor/fan_coil
+    # registers); a stable unique_id keeps the same entity_id across changes.
+    unique_id_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -464,6 +476,28 @@ CONTROLLER_NUMBERS: tuple[EconextNumberEntityDescription, ...] = (
         icon="mdi:counter",
         native_min_value=0,
         native_max_value=100,
+        native_step=1,
+    ),
+    # Heat-source cooling hysteresis. Must be 0 for the cooling controller's
+    # dip-and-recover start trick (factory default 5 reintroduces the
+    # firmware start-margin we bypass).
+    EconextNumberEntityDescription(
+        key="heat_source_cooling_hyst",
+        param_id="473",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        icon="mdi:snowflake-thermometer",
+        native_min_value=0,
+        native_max_value=10,
+        native_step=1,
+    ),
+    # Circuit-2 continuous-cool flag (1 = continuous). Required by the
+    # cooling controller; circuit-2 scoped but exposed here for visibility.
+    EconextNumberEntityDescription(
+        key="circuit2_cooling_down_range",
+        param_id="1311",
+        icon="mdi:snowflake",
+        native_min_value=0,
+        native_max_value=1,
         native_step=1,
     ),
 )
@@ -1440,6 +1474,9 @@ CIRCUIT_NUMBERS: tuple[EconextNumberEntityDescription, ...] = (
         native_min_value=0.0,
         native_max_value=4.0,
         native_step=0.1,
+        # Stable unique_id so changing the circuit type (radiator/ufh/fan_coil)
+        # — and therefore the underlying curve register — keeps the same entity.
+        unique_id_key="heating_curve",
     ),
     # Curve shift
     EconextNumberEntityDescription(

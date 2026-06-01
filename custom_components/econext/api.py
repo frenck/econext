@@ -124,18 +124,34 @@ class EconextApi:
 
         """
         url = f"{self._base_url}{API_ENDPOINT_PARAMETERS}/{name}"
-        timeout = aiohttp.ClientTimeout(total=10)
+        # HP parameter writes traverse the RS-485 bus and are genuinely slow;
+        # a tight client timeout can fire after the gateway has already applied
+        # the value. Allow more headroom than reads.
+        timeout = aiohttp.ClientTimeout(total=30)
 
-        try:
-            async with self._session.post(url, json={"value": value}, timeout=timeout) as response:
-                if response.status != 200:
-                    raise EconextApiError(f"API returned status {response.status}")
+        for attempt in (1, 2):
+            try:
+                async with self._session.post(url, json={"value": value}, timeout=timeout) as response:
+                    if response.status != 200:
+                        raise EconextApiError(f"API returned status {response.status}")
 
-                _LOGGER.debug("Set param %s to %s", name, value)
-                return True
+                    _LOGGER.debug("Set param %s to %s", name, value)
+                    return True
 
-        except aiohttp.ClientError as err:
-            raise EconextConnectionError(f"Connection error: {err}") from err
+            except TimeoutError:
+                # The POST commonly still applies; only the response wait timed
+                # out. Retry once (writes are idempotent), then treat as a soft
+                # success — the coordinator re-reads the value on its next poll.
+                _LOGGER.warning(
+                    "Write to %s timed out (attempt %d/2); value usually applies, "
+                    "will be verified on next poll",
+                    name,
+                    attempt,
+                )
+            except aiohttp.ClientError as err:
+                raise EconextConnectionError(f"Connection error: {err}") from err
+
+        return True
 
     async def async_submit_thermostat_temperature(self, temperature: float) -> bool:
         """Submit a room temperature to the virtual thermostat."""
