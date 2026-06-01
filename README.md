@@ -143,18 +143,15 @@ it and pick a dew-point sensor in the integration's options.
 5. Save. The integration reloads and a new **Cooling (econext)** device
    appears.
 
-On first save the integration will, if needed, copy your existing heating
-curve value over to the fan-coil curve register and then switch the chosen
-circuit to **fan_coil** so the HP runs the right control law. This is
-idempotent — a no-op if the circuit is already fan_coil. The same heating
-curve entity stays at the same `entity_id`.
+On first save the integration will switch teh selected circuit to "fan coil", as
+this is the only mode it can reach temperature below 18 degrees
+(needed for the initial dip to start the cooling cycle).
 
 ### Cooling (econext) device
 
 The new device exposes:
 
-- **Switches** — `Cooling enable` (master), `Cooling dry run` (no real
-  writes; observe-only).
+- **Switches** — `Cooling enable`, `Cooling dry run` (no real writes; observe and log only).
 - **Sensors** — `Cooling cycle state` (idle/starting/running/cooldown),
   `Cooling safe target`, `Cooling working target`, `Flow below dew point`,
   `Last cooling run`, `Last cooling cycle end`.
@@ -168,9 +165,7 @@ The new device exposes:
 
 Leave **Cooling dry run** on for a day. Watch
 `sensor.cooling_econext_cooling_cycle_state` and `Flow below dew point`
-across a real demand period — every decision is also logged at INFO under
-`custom_components.econext.cooling.driver` if you enable that logger. When
-you're satisfied, turn dry-run off to let the controller drive the HP.
+across a real demand period — every decision is also logged
 
 ### Notes & limitations (beta)
 
@@ -178,13 +173,12 @@ you're satisfied, turn dry-run off to let the controller drive the HP.
   command the HP below that, to preserve dew margin on high-dew days.
 - On dew-sensor outage the controller skips starting and, if running, winds
   the current cycle down.
-- Compressor / pump-speed assertions are season- and work-mode-gated so the
-  controller never touches the heating values.
+- Integration sets min pump-speed to 85% to reduce the deltaT, allowing the cooling to run for longer before
+  dew point is reached. Resets to previous value when HP work mode changes back to heating.
 - The cooling feature is gated entirely behind the **Enable cooling
   controller** option — turn it off and no cooling entities, writes or
   bookkeeping happen.
-- Beta caveat: this is a new feature, please share logs (especially any
-  near-trip on `Flow below dew point`) before tuning the defaults.
+- Beta caveat: this is a new feature, please open a new issue and share logs if you run into any poblems.
 
 ## Supported Devices
 
