@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .climate import CIRCUITS
+from .climate import CIRCUITS, is_circuit_enabled
 from .const import (
     CIRCUIT_SWITCHES,
     CONF_THERMOSTAT_ENTITY,
@@ -74,10 +74,9 @@ async def async_setup_entry(
                     description.param_id,
                 )
 
-    # Add circuit switch entities if circuit is active
+    # Add circuit switch entities for enabled circuits ("Circuit support" bit)
     for circuit_num, circuit in CIRCUITS.items():
-        active = coordinator.get_param(circuit.active_param)
-        if active and active.get("value", 0) > 0:
+        if is_circuit_enabled(coordinator, circuit):
             for description in CIRCUIT_SWITCHES:
                 param_id = circuit.settings_param
                 if param_id and coordinator.get_param(param_id) is not None:

@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .climate import CIRCUITS
+from .climate import CIRCUITS, is_circuit_enabled
 from .const import (
     CIRCUIT_SCHEDULE_DIAGNOSTIC_SENSORS,
     CIRCUIT_SENSORS,
@@ -178,11 +178,9 @@ async def async_setup_entry(
                     description.param_id_pm,
                 )
 
-    # Add circuit sensors if circuit is active
+    # Add circuit sensors for enabled circuits ("Circuit support" bit)
     for circuit_num, circuit in CIRCUITS.items():
-        # Check if circuit is active
-        active = coordinator.get_param(circuit.active_param)
-        if active and active.get("value") > 0:
+        if is_circuit_enabled(coordinator, circuit):
             # Create sensors for this circuit
             for description in CIRCUIT_SENSORS:
                 # Map the sensor key to the appropriate circuit parameter
