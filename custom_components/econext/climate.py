@@ -384,6 +384,25 @@ CIRCUITS = {
 }
 
 
+# Settings bit 0 = "Circuit support" - the per-circuit master enable (confirmed live against
+# the controller panel). A circuit exists whenever this bit is set, regardless of whether it
+# is currently switched on. Do NOT gate on Circuit{N}active (a runtime "switched on" flag
+# that reads 0 for an enabled-but-off circuit) nor on bit 8 (room-thermostat-bound, which a
+# disabled circuit can also have). See econext-gateway docs/PARAMETERS.md.
+CIRCUIT_ENABLED_MASK = 0x1
+
+
+def is_circuit_enabled(coordinator: EconextCoordinator, circuit: Circuit) -> bool:
+    """Return True if the circuit's master-enable ("Circuit support") bit is set."""
+    settings = coordinator.get_param(circuit.settings_param)
+    if not settings:
+        return False
+    try:
+        return bool(int(settings.get("value", 0)) & CIRCUIT_ENABLED_MASK)
+    except (TypeError, ValueError):
+        return False
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -396,9 +415,8 @@ async def async_setup_entry(
 
     # Check each circuit
     for circuit_num, circuit in CIRCUITS.items():
-        # Check if circuit is active
-        active = coordinator.get_param(circuit.active_param)
-        if active and active.get("value", 0) > 0:
+        # Only create entities for enabled circuits ("Circuit support" bit in Settings)
+        if is_circuit_enabled(coordinator, circuit):
             entities.append(
                 CircuitClimate(
                     coordinator,
@@ -416,9 +434,9 @@ async def async_setup_entry(
             _LOGGER.debug("Adding climate entity for Circuit %s", circuit_num)
         else:
             _LOGGER.debug(
-                "Skipping Circuit %s - not active (param %s)",
+                "Skipping Circuit %s - not enabled (Settings param %s)",
                 circuit_num,
-                circuit.active_param,
+                circuit.settings_param,
             )
 
     async_add_entities(entities)

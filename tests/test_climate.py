@@ -12,7 +12,13 @@ from homeassistant.components.climate.const import PRESET_BOOST, PRESET_COMFORT,
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 
-from custom_components.econext.climate import CIRCUITS, CircuitClimate, CircuitWorkState, async_setup_entry
+from custom_components.econext.climate import (
+    CIRCUITS,
+    CircuitClimate,
+    CircuitWorkState,
+    async_setup_entry,
+    is_circuit_enabled,
+)
 from custom_components.econext.coordinator import EconextCoordinator
 
 
@@ -104,19 +110,21 @@ class TestAsyncSetupEntry:
 
         await async_setup_entry(mock_hass, mock_entry, mock_add_entities)
 
-        # Only Circuit 2 is active in fixture (value=1)
+        # Only Circuit 2 is enabled in the fixture (Circuit2Settings bit 0 = "circuit support")
         assert len(entities_added) == 1
         assert entities_added[0]._circuit_num == 2
 
     @pytest.mark.asyncio
-    async def test_setup_skips_inactive_circuits(self, mock_hass: MagicMock, coordinator: EconextCoordinator) -> None:
-        """Test circuits with active param value=0 are skipped."""
+    async def test_setup_enables_circuit_via_settings_bit(
+        self, mock_hass: MagicMock, coordinator: EconextCoordinator
+    ) -> None:
+        """Circuits gain entities when their Settings 'circuit support' bit (bit 0) is set."""
         mock_entry = MagicMock()
         mock_entry.entry_id = "test_entry"
         mock_hass.data = {"econext": {"test_entry": {"coordinator": coordinator}}}
 
-        # Activate Circuit 1 by setting its active param to 1
-        coordinator.data["279"]["value"] = 1
+        # Enable Circuit 1 by setting its Settings (param 231) circuit-support bit
+        coordinator.data["231"]["value"] |= 0x1
 
         entities_added = []
 
@@ -129,6 +137,53 @@ class TestAsyncSetupEntry:
         circuit_nums = {e._circuit_num for e in entities_added}
         assert circuit_nums == {1, 2}
         assert len(entities_added) == 2
+
+
+class TestIsCircuitEnabled:
+    """Test the Settings bit-0 ('circuit support') master-enable gate."""
+
+    def test_enabled_when_support_bit_set(self, coordinator: EconextCoordinator) -> None:
+        """A circuit is enabled when its Settings bit 0 is set."""
+        coordinator.data["231"]["value"] = 0x1  # Circuit1Settings, bit 0 set
+        assert is_circuit_enabled(coordinator, CIRCUITS[1]) is True
+
+    def test_disabled_with_thermostat_bound_but_no_support(self, coordinator: EconextCoordinator) -> None:
+        """A disabled circuit that has a room thermostat bound (bit 8) is NOT enabled.
+
+        Fixture Circuit1Settings = 8482300: bit 0 = 0 (support off), bit 8 = 1 (thermostat
+        bound). Proves bit 8 is not a visibility/enable gate.
+        """
+        settings = coordinator.data["231"]["value"]
+        assert settings & 0x1 == 0  # circuit support off
+        assert (settings >> 8) & 1 == 1  # but a room thermostat is bound
+        assert is_circuit_enabled(coordinator, CIRCUITS[1]) is False
+
+    def test_disabled_when_settings_missing(self, coordinator: EconextCoordinator) -> None:
+        """A missing Settings parameter means the circuit is not enabled."""
+        del coordinator.data["231"]
+        assert is_circuit_enabled(coordinator, CIRCUITS[1]) is False
+
+    @pytest.mark.asyncio
+    async def test_enabled_circuit_created_even_when_active_flag_zero(
+        self, mock_hass: MagicMock, coordinator: EconextCoordinator
+    ) -> None:
+        """Regression (forum: Glyn's Circuit 1 "unavailable in HA").
+
+        A circuit enabled via Settings bit 0 must get an entity even when its runtime
+        Circuit{N}active flag is 0 (e.g. the circuit is switched off in summer). The old
+        gate used `active > 0` and wrongly dropped such circuits.
+        """
+        coordinator.data["231"]["value"] |= 0x1  # Circuit1 support ON
+        assert coordinator.data["279"]["value"] == 0  # runtime active flag still 0
+
+        mock_entry = MagicMock()
+        mock_entry.entry_id = "test_entry"
+        mock_hass.data = {"econext": {"test_entry": {"coordinator": coordinator}}}
+
+        entities_added: list = []
+        await async_setup_entry(mock_hass, mock_entry, entities_added.extend)
+
+        assert 1 in {e._circuit_num for e in entities_added}
 
 
 class TestCircuitClimate:
